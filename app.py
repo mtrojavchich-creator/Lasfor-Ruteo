@@ -191,13 +191,42 @@ def _normalize_header(header: str) -> str:
 def _as_float(value: Any) -> float | None:
     if value is None:
         return None
-    text = str(value).strip().replace(".", "").replace(",", ".")
+    text = str(value).strip()
+    if not text or text.upper() == "#REF!":
+        return None
+
+    text = text.replace(" ", "")
+    if "," in text and "." in text:
+        last_comma = text.rfind(",")
+        last_dot = text.rfind(".")
+        decimal_sep = "," if last_comma > last_dot else "."
+        thousands_sep = "." if decimal_sep == "," else ","
+        text = text.replace(thousands_sep, "")
+        text = text.replace(decimal_sep, ".")
+    elif "," in text:
+        text = text.replace(".", "")
+        text = text.replace(",", ".")
+    elif "." in text:
+        if re.fullmatch(r"[1-9]\d{0,2}(?:\.\d{3})+", text):
+            text = text.replace(".", "")
+
     if not text:
         return None
     try:
         return float(text)
     except ValueError:
         return None
+
+
+def _is_valid_ep_por_caja(value: float | None) -> bool:
+    return value is not None and 0 < value <= 1
+
+
+def _self_check_as_float() -> None:
+    assert abs((_as_float("0.027777") or 0.0) - 0.027777) < 1e-9
+    assert abs((_as_float("0,027777") or 0.0) - 0.027777) < 1e-9
+    assert abs((_as_float("1.234,56") or 0.0) - 1234.56) < 1e-9
+    assert abs((_as_float("1,234.56") or 0.0) - 1234.56) < 1e-9
 
 
 def _excel_serial_to_iso(value: str) -> str | None:
@@ -332,11 +361,28 @@ def import_data(
             errors.append({"sheet": "MA_ARTICULOS", "error": "Hoja requerida para maestros no encontrada"})
         else:
             header = _header_index_map(articulo_rows[0])
-            for row in articulo_rows[1:]:
+            for row_n, row in enumerate(articulo_rows[1:], start=2):
                 sku = row[header.get("sku", -1)].strip() if "sku" in header and len(row) > header["sku"] else ""
                 descripcion = row[header.get("descripcion", -1)].strip() if "descripcion" in header and len(row) > header["descripcion"] else ""
+                cajas_raw = (
+                    row[header.get("cajas_por_pallet", -1)].strip()
+                    if "cajas_por_pallet" in header and len(row) > header["cajas_por_pallet"]
+                    else ""
+                )
                 ep_raw = row[header.get("ep_por_caja", -1)].strip() if "ep_por_caja" in header and len(row) > header["ep_por_caja"] else ""
+                cajas_por_pallet = _as_float(cajas_raw)
                 ep_por_caja = _as_float(ep_raw)
+                if not _is_valid_ep_por_caja(ep_por_caja) and cajas_por_pallet and cajas_por_pallet > 0:
+                    ep_por_caja = 1 / cajas_por_pallet
+                if not _is_valid_ep_por_caja(ep_por_caja):
+                    ep_por_caja = None
+                    if descripcion:
+                        errors.append(
+                            {
+                                "sheet": "MA_ARTICULOS",
+                                "error": f"EP/caja inválido para artículo {descripcion} (fila {row_n})",
+                            }
+                        )
                 if not descripcion:
                     continue
                 db.execute(
@@ -376,20 +422,33 @@ def import_data(
                     descripcion = row[0].strip() if row else ""
                     if not descripcion:
                         continue
-                    cantidad_raw = row[col] if len(row) > col else ""
-                    cantidad = _as_float(cantidad_raw)
-                    if cantidad is None or cantidad <= 0:
+                    cajas_raw = row[col] if len(row) > col else ""
+                    cajas = _as_float(cajas_raw)
+                    if cajas is None or cajas <= 0:
                         continue
-                    art = _find_articulo_id(db, None, descripcion)
+                    art = db.execute(
+                        "SELECT id, ep_por_caja FROM articulos WHERE descripcion = ?",
+                        (descripcion,),
+                    ).fetchone()
                     if art is None:
                         errors.append({"sheet": "TX_LINEAS_PEDIDOS", "error": f"Artículo no existe: {descripcion} (fila {row_n})"})
                         continue
+                    ep_por_caja = art["ep_por_caja"]
+                    if not _is_valid_ep_por_caja(ep_por_caja):
+                        errors.append(
+                            {
+                                "sheet": "TX_LINEAS_PEDIDOS",
+                                "error": f"Artículo sin EP/caja válido: {descripcion} (fila {row_n})",
+                            }
+                        )
+                        continue
+                    ep_cantidad = cajas * ep_por_caja
                     db.execute(
                         """
                         INSERT INTO pedidos (semana_id, cliente_id, articulo_id, ep_cantidad, created_at)
                         VALUES (?, ?, ?, ?, ?)
                         """,
-                        (semana_id, cli["id"], art, cantidad, now),
+                        (semana_id, cli["id"], art["id"], ep_cantidad, now),
                     )
                     summary["pedidos"] += 1
 
@@ -438,14 +497,20 @@ def import_data(
                     continue
                 sku = row[1].strip() if len(row) > 1 else ""
                 descripcion = row[2].strip() if len(row) > 2 else ""
+                cantidad = _as_float(row[3]) if len(row) > 3 else None
                 ep_val = _as_float(row[5]) if len(row) > 5 else None
-                if ep_val is None:
-                    ep_val = _as_float(row[3]) if len(row) > 3 else None
-                if ep_val is None or (not sku and not descripcion):
+                if not sku and not descripcion:
                     continue
                 articulo_id = _find_articulo_id(db, sku or None, descripcion or None)
                 if articulo_id is None:
                     errors.append({"sheet": sheet_name, "error": f"SKU/Artículo inexistente: {sku or descripcion}"})
+                    continue
+                if ep_val is None:
+                    art = db.execute("SELECT ep_por_caja FROM articulos WHERE id = ?", (articulo_id,)).fetchone()
+                    ep_por_caja = art["ep_por_caja"] if art else None
+                    if cantidad is not None and _is_valid_ep_por_caja(ep_por_caja):
+                        ep_val = cantidad * ep_por_caja
+                if ep_val is None:
                     continue
                 db.execute(
                     f"INSERT INTO {table_name} (semana_id, dia, articulo_id, ep_cantidad, created_at) VALUES (?, ?, ?, ?, ?)",

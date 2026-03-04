@@ -9,6 +9,11 @@ Implementación actual en Flask + SQLite con deploy Docker.
 - `/maestros/vehiculos`, `/maestros/rutas`
 - `/autoruteo`, `/resultado`
 
+## Importador (nota de conversión y locale)
+- `MA_ARTICULOS` parsea `cajas_por_pallet` y `ep_por_caja` con parser numérico robusto para formatos `0.027777`, `0,027777`, `1.234,56` y `1,234.56`.
+- Si `ep_por_caja` es inválido/vacío, usa fallback `1 / cajas_por_pallet` cuando ese dato es válido.
+- En `TX_LINEAS_PEDIDOS`, la matriz se interpreta como **cajas** y se convierte a EP con `ep = cajas * ep_por_caja` del artículo antes de guardar en `pedidos.ep_cantidad`.
+
 ## Autoruteo implementado
 - Horizonte hábil: desde `Fecha_Entrega` de semana activa + 5 días hábiles adicionales (L–V).
 - Corte duro de stock: si para algún SKU `stock día 1 + producción horizonte < demanda total`, bloquea sin generar rutas.
