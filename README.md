@@ -1,44 +1,44 @@
-# Resumen layout de `fixtures/IMPORT.xlsm`
+# LASFOR — Scaffold mínimo deployable (Paso 2)
 
-Este README resume el layout del fixture `fixtures/IMPORT.xlsm` para el parser de importación.
+Este estado del proyecto incluye una base en Flask + SQLite lista para deploy con Docker.
 
-## Hojas (orden real)
-1. `MA_CLIENTES`
-2. `MA_ARTICULOS`
-3. `TX_LINEAS_PEDIDOS`
-4. `TX_TURNOS`
-5. `TX_STOCK_DIA`
-6. `TX_PLAN_PROD_DIA`
+## Incluye
 
-> No aparece hoja `PARAMETROS` en este fixture.
+- `app.py` con inicialización de Flask.
+- Migración automática al iniciar (creación de tablas base `schema_migrations`, `config`, `semanas`).
+- Rutas:
+  - `/` dashboard mínimo
+  - `/health` (devuelve `ok` y `db_path`)
+  - `/semanas` (crear y listar semanas, con opción de activar)
+- Estructura de UI mínima:
+  - `templates/base.html`
+  - `templates/index.html`
+  - `templates/semanas.html`
+  - `static/styles.css`
+- Deploy con Docker:
+  - `Dockerfile`
+  - `.dockerignore`
+  - `requirements.txt`
 
-## Bloques `DÍA 1..6`
+> Aún no se implementan `/importar`, `/autoruteo` ni la lógica de planificación.
 
-### `TX_STOCK_DIA`
-- Hoja en bloques verticales repetidos por día.
-- Estructura por bloque: fila de rótulo (`DÍA n`, excepto día 1), fila de encabezados, filas de datos.
-- Encabezados del bloque: `FECHA`, `SKU`, `DESCRIPCION`, `CANTIDAD`, `UoM`, `EP_Stock`.
-- Ubicación de bloques:
-  - `DÍA 1`: encabezado fila 2, datos desde fila 3.
-  - `DÍA 2`: rótulo fila 125, encabezado fila 126, datos desde 127.
-  - `DÍA 3`: rótulo fila 248, encabezado fila 249, datos desde 250.
-  - `DÍA 4`: rótulo fila 371, encabezado fila 372, datos desde 373.
-  - `DÍA 5`: rótulo fila 494, encabezado fila 495, datos desde 496.
-  - `DÍA 6`: rótulo fila 617, encabezado fila 618, datos desde 619.
+## Ejecutar en local
 
-### `TX_PLAN_PROD_DIA`
-- Misma lógica de bloques verticales que `TX_STOCK_DIA`.
-- Encabezados del bloque: `FECHA`, `SKU`, `DESCRIPCION`, `CANTIDAD`, `UOM`, `EP_PRODUCCION`.
-- Ubicación de bloques:
-  - `DÍA 1`: encabezado fila 2, datos desde fila 3.
-  - `DÍA 2`: rótulo fila 125, encabezado fila 126, datos desde 127.
-  - `DÍA 3`: rótulo fila 248, encabezado fila 249, datos desde 250.
-  - `DÍA 4`: rótulo fila 371, encabezado fila 372, datos desde 373.
-  - `DÍA 5`: rótulo fila 494, encabezado fila 495, datos desde 496.
-  - `DÍA 6`: rótulo fila 617, encabezado fila 618, datos desde 619.
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+python app.py
+```
 
-## Nota rápida de las otras hojas
-- `MA_CLIENTES`: tabla de clientes (campos maestros, ruta y secuencia por defecto).
-- `MA_ARTICULOS`: tabla de artículos (SKU, descripción y factores de conversión).
-- `TX_LINEAS_PEDIDOS`: matriz (`DESCRIPCION` en columna A; clientes en columnas B..).
-- `TX_TURNOS`: tabla de turnos confirmados (incluye `Pallets_Turnados`).
+Variables opcionales:
+
+- `PORT` (default `8000`)
+- `DB_PATH` (default `/data/lasfor.db`)
+
+## Ejecutar con Docker
+
+```bash
+docker build -t lasfor .
+docker run --rm -p 8000:8000 -e DB_PATH=/data/lasfor.db -v $(pwd)/data:/data lasfor
+```

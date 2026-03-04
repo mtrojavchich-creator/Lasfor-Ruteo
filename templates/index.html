@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block title %}Dashboard | LASFOR{% endblock %}
+{% block content %}
+<section>
+  <h2>Dashboard</h2>
+  {% if semana_activa %}
+  <p><strong>Semana activa:</strong> {{ semana_activa['nombre'] }} (ID {{ semana_activa['id'] }})</p>
+  <p><strong>Inicio:</strong> {{ semana_activa['fecha_inicio'] or '—' }} | <strong>Entrega:</strong> {{ semana_activa['fecha_entrega'] or '—' }}</p>
+  {% else %}
+  <p>No hay semana activa.</p>
+  {% endif %}
+</section>
+{% endblock %}

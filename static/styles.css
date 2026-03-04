@@ -1,0 +1,33 @@
+body {
+  font-family: Arial, sans-serif;
+  margin: 0;
+  background: #f7f7fb;
+  color: #222;
+}
+header {
+  background: #1f2a44;
+  color: #fff;
+  padding: 1rem;
+}
+nav a {
+  color: #fff;
+  margin-right: 1rem;
+}
+main {
+  padding: 1rem;
+}
+form {
+  display: grid;
+  gap: 0.75rem;
+  max-width: 420px;
+}
+table {
+  border-collapse: collapse;
+  width: 100%;
+  max-width: 720px;
+}
+th,
+td {
+  border: 1px solid #ddd;
+  padding: 0.5rem;
+}
