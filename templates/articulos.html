@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Artículos | LASFOR{% endblock %}
+{% block content %}
+<h2>Artículos</h2>
+<table>
+  <thead><tr><th>SKU</th><th>Descripción</th><th>EP/Caja</th></tr></thead>
+  <tbody>
+    {% for a in articulos %}
+    <tr><td>{{ a['sku'] or '—' }}</td><td>{{ a['descripcion'] }}</td><td>{{ a['ep_por_caja'] or '—' }}</td></tr>
+    {% else %}
+    <tr><td colspan="3">Sin artículos.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

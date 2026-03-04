@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Autoruteo | LASFOR{% endblock %}
+{% block content %}
+<h2>Autoruteo</h2>
+{% if semana %}
+<p>Semana activa: <strong>{{ semana['nombre'] }}</strong> | Fecha entrega: {{ semana['fecha_entrega'] or '—' }}</p>
+<form method="post"><button type="submit">Ejecutar autoruteo</button></form>
+{% else %}
+<p>No hay semana activa.</p>
+{% endif %}
+{% if message %}
+<p><strong>{{ message }}</strong></p>
+{% endif %}
+<p><a href="{{ url_for('resultado') }}">Ver resultado por día</a></p>
+{% endblock %}

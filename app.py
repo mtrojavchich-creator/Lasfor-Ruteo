@@ -130,6 +130,36 @@ def init_db() -> None:
             summary_json TEXT NOT NULL,
             errores_csv TEXT NOT NULL
         );
+
+        CREATE TABLE IF NOT EXISTS vehiculos (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            capacidad_ep REAL NOT NULL,
+            max_clientes INTEGER NOT NULL,
+            max_turnos INTEGER NOT NULL,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS rutas (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            nombre TEXT NOT NULL UNIQUE,
+            vehiculo_id INTEGER NOT NULL,
+            activa INTEGER NOT NULL DEFAULT 1,
+            updated_at TEXT NOT NULL
+        );
+
+        CREATE TABLE IF NOT EXISTS asignaciones (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            semana_id INTEGER NOT NULL,
+            fecha TEXT NOT NULL,
+            ruta_id INTEGER NOT NULL,
+            cliente_id INTEGER NOT NULL,
+            ep_asignado REAL NOT NULL,
+            con_turno INTEGER NOT NULL DEFAULT 0,
+            turno_id INTEGER,
+            secuencia INTEGER,
+            created_at TEXT NOT NULL
+        );
         """
     )
     db.execute(
@@ -436,12 +466,223 @@ def _errors_to_csv(errors: list[dict[str, str]]) -> str:
     return output.getvalue()
 
 
+def _get_semana_activa(db: sqlite3.Connection) -> sqlite3.Row | None:
+    return db.execute(
+        "SELECT id, nombre, fecha_inicio, fecha_entrega FROM semanas WHERE activa = 1 ORDER BY id DESC LIMIT 1"
+    ).fetchone()
+
+
+def _business_horizon(fecha_entrega: str, dias_adicionales: int = 5) -> list[str]:
+    start = datetime.fromisoformat(fecha_entrega).date()
+    while start.weekday() >= 5:
+        start += timedelta(days=1)
+    days = [start]
+    cursor = start
+    while len(days) < dias_adicionales + 1:
+        cursor += timedelta(days=1)
+        if cursor.weekday() < 5:
+            days.append(cursor)
+    return [d.isoformat() for d in days]
+
+
+def _run_autoruteo(db: sqlite3.Connection, semana_id: int) -> tuple[bool, str]:
+    semana = db.execute("SELECT id, fecha_entrega FROM semanas WHERE id = ?", (semana_id,)).fetchone()
+    if semana is None or not semana["fecha_entrega"]:
+        return False, "La semana activa no tiene Fecha_Entrega cargada."
+
+    horizon = _business_horizon(semana["fecha_entrega"], 5)
+    horizon_days = {idx + 1: date for idx, date in enumerate(horizon)}
+
+    stock_rows = db.execute(
+        """
+        SELECT a.descripcion AS sku, SUM(s.ep_cantidad) AS stock_ep
+        FROM stock_dia s
+        JOIN articulos a ON a.id = s.articulo_id
+        WHERE s.semana_id = ? AND s.dia = 1
+        GROUP BY a.id
+        """,
+        (semana_id,),
+    ).fetchall()
+    prod_rows = db.execute(
+        """
+        SELECT a.descripcion AS sku, SUM(p.ep_cantidad) AS prod_ep
+        FROM prod_dia p
+        JOIN articulos a ON a.id = p.articulo_id
+        WHERE p.semana_id = ? AND p.dia BETWEEN 1 AND ?
+        GROUP BY a.id
+        """,
+        (semana_id, len(horizon)),
+    ).fetchall()
+    demand_rows = db.execute(
+        """
+        SELECT a.descripcion AS sku, SUM(pe.ep_cantidad) AS demand_ep
+        FROM pedidos pe
+        JOIN articulos a ON a.id = pe.articulo_id
+        WHERE pe.semana_id = ?
+        GROUP BY a.id
+        """,
+        (semana_id,),
+    ).fetchall()
+
+    stock_by_sku = {row["sku"]: row["stock_ep"] or 0.0 for row in stock_rows}
+    prod_by_sku = {row["sku"]: row["prod_ep"] or 0.0 for row in prod_rows}
+    shortages: list[str] = []
+    for row in demand_rows:
+        sku = row["sku"]
+        demand = row["demand_ep"] or 0.0
+        available = stock_by_sku.get(sku, 0.0) + prod_by_sku.get(sku, 0.0)
+        saldo = available - demand
+        if saldo < -1e-9:
+            shortages.append(f"{sku}: faltan {abs(saldo):.2f} EP")
+    if shortages:
+        return False, "Stock insuficiente (corte duro): " + "; ".join(shortages)
+
+    rutas = db.execute(
+        """
+        SELECT r.id, r.nombre, v.capacidad_ep, v.max_clientes, v.max_turnos
+        FROM rutas r
+        JOIN vehiculos v ON v.id = r.vehiculo_id
+        WHERE r.activa = 1
+        ORDER BY r.id
+        """
+    ).fetchall()
+    if not rutas:
+        return False, "No hay rutas activas configuradas."
+
+    backlog_rows = db.execute(
+        """
+        SELECT c.id AS cliente_id, c.razon_social, c.ruta_default, c.secuencia_default, SUM(p.ep_cantidad) AS ep_total
+        FROM pedidos p
+        JOIN clientes c ON c.id = p.cliente_id
+        WHERE p.semana_id = ?
+        GROUP BY c.id
+        """,
+        (semana_id,),
+    ).fetchall()
+    backlog = {row["cliente_id"]: row["ep_total"] or 0.0 for row in backlog_rows}
+    clientes_meta = {
+        row["cliente_id"]: {
+            "nombre": row["razon_social"],
+            "ruta_default": row["ruta_default"],
+            "secuencia_default": row["secuencia_default"] or 999999,
+        }
+        for row in backlog_rows
+    }
+
+    turnos_rows = db.execute(
+        """
+        SELECT t.id, t.cliente_id, t.fecha, t.hora, t.pallets_turnados, c.razon_social
+        FROM turnos t
+        JOIN clientes c ON c.id = t.cliente_id
+        WHERE t.semana_id = ?
+        ORDER BY t.fecha, t.hora, t.id
+        """,
+        (semana_id,),
+    ).fetchall()
+    turnos_por_dia: dict[str, list[sqlite3.Row]] = {}
+    for turno in turnos_rows:
+        if turno["fecha"]:
+            turnos_por_dia.setdefault(turno["fecha"], []).append(turno)
+
+    db.execute("DELETE FROM asignaciones WHERE semana_id = ?", (semana_id,))
+    now = datetime.utcnow().isoformat(timespec="seconds")
+
+    for day_number, day in horizon_days.items():
+        day_state = {
+            route["id"]: {
+                "cap_left": route["capacidad_ep"],
+                "clients": set(),
+                "turnos": 0,
+                "nombre": route["nombre"],
+                "max_clientes": route["max_clientes"],
+                "max_turnos": route["max_turnos"],
+            }
+            for route in rutas
+        }
+
+        def can_assign(route_id: int, cliente_id: int, ep: float, con_turno: bool) -> bool:
+            state = day_state[route_id]
+            if ep > state["cap_left"] + 1e-9:
+                return False
+            if cliente_id not in state["clients"] and len(state["clients"]) >= state["max_clientes"]:
+                return False
+            if con_turno and state["turnos"] >= state["max_turnos"]:
+                return False
+            return True
+
+        def apply_assign(route_id: int, cliente_id: int, ep: float, con_turno: bool, turno_id: int | None) -> None:
+            state = day_state[route_id]
+            state["cap_left"] -= ep
+            if cliente_id not in state["clients"]:
+                state["clients"].add(cliente_id)
+            if con_turno:
+                state["turnos"] += 1
+            secuencia = len(state["clients"])
+            db.execute(
+                """
+                INSERT INTO asignaciones (semana_id, fecha, ruta_id, cliente_id, ep_asignado, con_turno, turno_id, secuencia, created_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (semana_id, day, route_id, cliente_id, ep, 1 if con_turno else 0, turno_id, secuencia, now),
+            )
+            backlog[cliente_id] = max(0.0, backlog.get(cliente_id, 0.0) - ep)
+
+        for turno in turnos_por_dia.get(day, []):
+            cliente_id = turno["cliente_id"]
+            pendiente = backlog.get(cliente_id, 0.0)
+            if pendiente <= 0:
+                continue
+            pallets_turnados = turno["pallets_turnados"]
+            if pallets_turnados is not None and pallets_turnados > 0 and pallets_turnados < pendiente:
+                requerido = pallets_turnados
+            else:
+                requerido = pendiente
+
+            chosen = None
+            pref = clientes_meta.get(cliente_id, {}).get("ruta_default")
+            rutas_ordenadas = sorted(rutas, key=lambda r: (0 if pref and r["nombre"] == pref else 1, r["id"]))
+            for route in rutas_ordenadas:
+                if can_assign(route["id"], cliente_id, requerido, True):
+                    chosen = route
+                    break
+            if chosen is None:
+                return False, f"Turno incumplible para cliente {turno['razon_social']} el día {day}."
+            apply_assign(chosen["id"], cliente_id, requerido, True, turno["id"])
+
+        clientes_sin_turno = [cid for cid, ep in backlog.items() if ep > 0]
+        clientes_sin_turno.sort(
+            key=lambda cid: (
+                0 if clientes_meta[cid].get("ruta_default") else 1,
+                clientes_meta[cid]["secuencia_default"],
+                clientes_meta[cid]["nombre"],
+            )
+        )
+
+        for cliente_id in clientes_sin_turno:
+            ep = backlog.get(cliente_id, 0.0)
+            if ep <= 0:
+                continue
+            preferred = clientes_meta[cliente_id].get("ruta_default")
+            chosen = None
+            rutas_ordenadas = sorted(rutas, key=lambda r: (0 if preferred and r["nombre"] == preferred else 1, r["id"]))
+            for route in rutas_ordenadas:
+                if can_assign(route["id"], cliente_id, ep, False):
+                    chosen = route
+                    break
+            if chosen:
+                apply_assign(chosen["id"], cliente_id, ep, False, None)
+
+    db.commit()
+    remanente = sum(backlog.values())
+    if remanente > 1e-9:
+        return True, f"Autoruteo ejecutado con backlog remanente de {remanente:.2f} EP fuera del horizonte."
+    return True, f"Autoruteo OK. Horizonte: {horizon[0]} a {horizon[-1]}."
+
+
 @app.route("/")
 def dashboard():
     db = get_db()
-    semana_activa = db.execute(
-        "SELECT id, nombre, fecha_inicio, fecha_entrega FROM semanas WHERE activa = 1 ORDER BY id DESC LIMIT 1"
-    ).fetchone()
+    semana_activa = _get_semana_activa(db)
     return render_template("index.html", semana_activa=semana_activa)
 
 
@@ -493,6 +734,125 @@ def semanas():
         "SELECT id, nombre, fecha_inicio, fecha_entrega, activa, created_at FROM semanas ORDER BY id DESC"
     ).fetchall()
     return render_template("semanas.html", semanas=rows)
+
+
+@app.route("/clientes")
+def clientes():
+    db = get_db()
+    rows = db.execute(
+        "SELECT cliente_ext_id, razon_social, ruta_default, secuencia_default, activo FROM clientes ORDER BY razon_social"
+    ).fetchall()
+    return render_template("clientes.html", clientes=rows)
+
+
+@app.route("/articulos")
+def articulos():
+    db = get_db()
+    rows = db.execute("SELECT sku, descripcion, ep_por_caja FROM articulos ORDER BY descripcion").fetchall()
+    return render_template("articulos.html", articulos=rows)
+
+
+@app.route("/maestros/vehiculos", methods=["GET", "POST"])
+def maestros_vehiculos():
+    db = get_db()
+    if request.method == "POST":
+        nombre = request.form.get("nombre", "").strip()
+        capacidad_ep = _as_float(request.form.get("capacidad_ep", "")) or 0.0
+        max_clientes = int(_as_float(request.form.get("max_clientes", "")) or 0)
+        max_turnos = int(_as_float(request.form.get("max_turnos", "")) or 0)
+        if nombre and capacidad_ep > 0 and max_clientes > 0:
+            db.execute(
+                """
+                INSERT INTO vehiculos (nombre, capacidad_ep, max_clientes, max_turnos, updated_at)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(nombre) DO UPDATE SET
+                    capacidad_ep=excluded.capacidad_ep,
+                    max_clientes=excluded.max_clientes,
+                    max_turnos=excluded.max_turnos,
+                    updated_at=excluded.updated_at
+                """,
+                (nombre, capacidad_ep, max_clientes, max_turnos, datetime.utcnow().isoformat(timespec="seconds")),
+            )
+            db.commit()
+        return redirect(url_for("maestros_vehiculos"))
+
+    rows = db.execute("SELECT id, nombre, capacidad_ep, max_clientes, max_turnos FROM vehiculos ORDER BY nombre").fetchall()
+    return render_template("vehiculos.html", vehiculos=rows)
+
+
+@app.route("/maestros/rutas", methods=["GET", "POST"])
+def maestros_rutas():
+    db = get_db()
+    if request.method == "POST":
+        nombre = request.form.get("nombre", "").strip()
+        vehiculo_id = int(_as_float(request.form.get("vehiculo_id", "")) or 0)
+        activa = 1 if request.form.get("activa") == "on" else 0
+        if nombre and vehiculo_id > 0:
+            db.execute(
+                """
+                INSERT INTO rutas (nombre, vehiculo_id, activa, updated_at)
+                VALUES (?, ?, ?, ?)
+                ON CONFLICT(nombre) DO UPDATE SET
+                    vehiculo_id=excluded.vehiculo_id,
+                    activa=excluded.activa,
+                    updated_at=excluded.updated_at
+                """,
+                (nombre, vehiculo_id, activa, datetime.utcnow().isoformat(timespec="seconds")),
+            )
+            db.commit()
+        return redirect(url_for("maestros_rutas"))
+
+    vehiculos = db.execute("SELECT id, nombre FROM vehiculos ORDER BY nombre").fetchall()
+    rutas = db.execute(
+        """
+        SELECT r.id, r.nombre, r.activa, v.nombre AS vehiculo
+        FROM rutas r JOIN vehiculos v ON v.id = r.vehiculo_id
+        ORDER BY r.nombre
+        """
+    ).fetchall()
+    return render_template("rutas.html", vehiculos=vehiculos, rutas=rutas)
+
+
+@app.route("/autoruteo", methods=["GET", "POST"])
+def autoruteo():
+    db = get_db()
+    semana = _get_semana_activa(db)
+    message = None
+    status = None
+    if request.method == "POST":
+        if semana is None:
+            status = "error"
+            message = "No hay semana activa."
+        else:
+            ok, message = _run_autoruteo(db, semana["id"])
+            status = "ok" if ok else "error"
+    return render_template("autoruteo.html", semana=semana, message=message, status=status)
+
+
+@app.route("/resultado")
+def resultado():
+    db = get_db()
+    semana = _get_semana_activa(db)
+    if semana is None:
+        return render_template("resultado.html", dias=[])
+
+    rows = db.execute(
+        """
+        SELECT a.fecha, r.nombre AS ruta, c.razon_social AS cliente, a.ep_asignado, a.con_turno, a.secuencia
+        FROM asignaciones a
+        JOIN rutas r ON r.id = a.ruta_id
+        JOIN clientes c ON c.id = a.cliente_id
+        WHERE a.semana_id = ?
+        ORDER BY a.fecha, r.nombre, a.secuencia, c.razon_social
+        """,
+        (semana["id"],),
+    ).fetchall()
+
+    grouped: dict[str, list[sqlite3.Row]] = {}
+    for row in rows:
+        grouped.setdefault(row["fecha"], []).append(row)
+    dias = [(fecha, grouped[fecha]) for fecha in sorted(grouped.keys())]
+    return render_template("resultado.html", dias=dias)
 
 
 @app.route("/importar", methods=["GET", "POST"])
