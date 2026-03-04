@@ -1,44 +1,49 @@
-# LASFOR — Scaffold mínimo deployable (Paso 2)
+# LASFOR — Paso 3: `/importar` en modo seguro
 
-Este estado del proyecto incluye una base en Flask + SQLite lista para deploy con Docker.
+Este estado incluye el scaffold Flask + SQLite y la implementación inicial de importación segura de Excel.
 
-## Incluye
+## Rutas disponibles
 
-- `app.py` con inicialización de Flask.
-- Migración automática al iniciar (creación de tablas base `schema_migrations`, `config`, `semanas`).
-- Rutas:
-  - `/` dashboard mínimo
-  - `/health` (devuelve `ok` y `db_path`)
-  - `/semanas` (crear y listar semanas, con opción de activar)
-- Estructura de UI mínima:
-  - `templates/base.html`
-  - `templates/index.html`
-  - `templates/semanas.html`
-  - `static/styles.css`
-- Deploy con Docker:
-  - `Dockerfile`
-  - `.dockerignore`
-  - `requirements.txt`
+- `/` dashboard mínimo.
+- `/health` (ok + `db_path`).
+- `/semanas` (crear/listar semanas y activar semana).
+- `/importar` (upload `.xlsm/.xlsx` con modo seguro).
+- `/importar/<run_id>/errores.csv` (descarga errores por corrida).
 
-> Aún no se implementan `/importar`, `/autoruteo` ni la lógica de planificación.
+## `/importar` (modo seguro)
 
-## Ejecutar en local
+El formulario incluye:
+
+- Upload de `IMPORT.xlsm` o `.xlsx`.
+- Checkbox `Importar operativo`.
+- Checkbox `Reemplazar operativo del escenario/semana`.
+- Checkbox `Importar maestros`.
+- Checkbox `Modo estricto` (ON por default).
+
+Comportamiento:
+
+- Registra cada corrida en `import_runs` con timestamp, semana activa, nombre de archivo, status, summary JSON y `errores.csv` serializado.
+- Si `modo estricto` está activo y hay errores de validación, se hace rollback completo de la carga operativa/maestros (`STRICT_ABORT`), pero la corrida y su log sí quedan registrados.
+- Si no está en modo estricto, inserta lo válido y deja estado `OK_WITH_ERRORS` cuando corresponda.
+
+## Notas de parser implementado
+
+Se parsea el archivo Excel vía XML interno (`.xlsx/.xlsm`), sin dependencias externas, cubriendo hojas:
+
+- `MA_CLIENTES`
+- `MA_ARTICULOS`
+- `TX_LINEAS_PEDIDOS` (matriz cliente × artículo)
+- `TX_TURNOS`
+- `TX_STOCK_DIA` (bloques DÍA 1..6 por marcador en columna A)
+- `TX_PLAN_PROD_DIA` (bloques DÍA 1..6 por marcador en columna A)
+
+## Ejecutar
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
 python app.py
 ```
 
-Variables opcionales:
+Variables:
 
 - `PORT` (default `8000`)
 - `DB_PATH` (default `/data/lasfor.db`)
-
-## Ejecutar con Docker
-
-```bash
-docker build -t lasfor .
-docker run --rm -p 8000:8000 -e DB_PATH=/data/lasfor.db -v $(pwd)/data:/data lasfor
-```
