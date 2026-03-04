@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}Clientes | LASFOR{% endblock %}
+{% block content %}
+<h2>Clientes</h2>
+<table>
+  <thead><tr><th>ID externo</th><th>Razón social</th><th>Ruta default</th><th>Secuencia</th><th>Activo</th></tr></thead>
+  <tbody>
+    {% for c in clientes %}
+    <tr><td>{{ c['cliente_ext_id'] }}</td><td>{{ c['razon_social'] }}</td><td>{{ c['ruta_default'] or '—' }}</td><td>{{ c['secuencia_default'] or '—' }}</td><td>{{ 'Sí' if c['activo'] else 'No' }}</td></tr>
+    {% else %}
+    <tr><td colspan="5">Sin clientes.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

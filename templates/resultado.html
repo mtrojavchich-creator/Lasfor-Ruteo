@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Resultado | LASFOR{% endblock %}
+{% block content %}
+<h2>Resultado por día</h2>
+{% for fecha, rows in dias %}
+<h3>{{ fecha }}</h3>
+<table>
+  <thead><tr><th>Ruta</th><th>Cliente</th><th>EP</th><th>Turno</th></tr></thead>
+  <tbody>
+    {% for r in rows %}
+    <tr><td>{{ r['ruta'] }}</td><td>{{ r['cliente'] }}</td><td>{{ '%.2f'|format(r['ep_asignado']) }}</td><td>{{ 'Sí' if r['con_turno'] else 'No' }}</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% else %}
+<p>Sin asignaciones para la semana activa.</p>
+{% endfor %}
+{% endblock %}

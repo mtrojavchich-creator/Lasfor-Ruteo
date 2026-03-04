@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Vehículos | LASFOR{% endblock %}
+{% block content %}
+<h2>Vehículos</h2>
+<form method="post">
+  <label>Nombre <input name="nombre" required /></label>
+  <label>Capacidad EP <input name="capacidad_ep" type="number" min="1" step="0.01" required /></label>
+  <label>Máx clientes <input name="max_clientes" type="number" min="1" required /></label>
+  <label>Máx turnos <input name="max_turnos" type="number" min="0" required /></label>
+  <button type="submit">Guardar</button>
+</form>
+<table>
+  <thead><tr><th>ID</th><th>Nombre</th><th>Capacidad</th><th>Máx clientes</th><th>Máx turnos</th></tr></thead>
+  <tbody>
+    {% for v in vehiculos %}
+    <tr><td>{{ v['id'] }}</td><td>{{ v['nombre'] }}</td><td>{{ v['capacidad_ep'] }}</td><td>{{ v['max_clientes'] }}</td><td>{{ v['max_turnos'] }}</td></tr>
+    {% else %}
+    <tr><td colspan="5">Sin vehículos.</td></tr>
+    {% endfor %}
+  </tbody>
+</table>
+{% endblock %}

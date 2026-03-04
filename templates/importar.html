@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block title %}Importar | LASFOR{% endblock %}
+{% block content %}
+<section>
+  <h2>Importar (modo seguro)</h2>
+  {% if message %}
+  <p><strong>{{ message }}</strong></p>
+  {% endif %}
+
+  <form method="post" enctype="multipart/form-data">
+    <p>
+      <label for="archivo">Archivo IMPORT (.xlsm/.xlsx)</label>
+      <input id="archivo" type="file" name="archivo" accept=".xlsm,.xlsx" required />
+    </p>
+
+    <label><input type="checkbox" name="import_operativo" checked /> Importar operativo (diario)</label><br />
+    <label><input type="checkbox" name="replace_operativo" /> Reemplazar operativo del escenario/semana</label><br />
+    <label><input type="checkbox" name="import_maestros" checked /> Importar maestros (ocasional)</label><br />
+    <label><input type="checkbox" name="modo_estricto" checked /> Modo estricto (rollback completo si hay errores)</label><br />
+
+    <p><button type="submit">Ejecutar importación</button></p>
+  </form>
+</section>
+
+<section>
+  <h2>Últimas corridas</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Fecha</th>
+        <th>Semana</th>
+        <th>Archivo</th>
+        <th>Estado</th>
+        <th>Resumen</th>
+        <th>Errores</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for run in runs %}
+      <tr>
+        <td>{{ run['id'] }}</td>
+        <td>{{ run['created_at'] }}</td>
+        <td>{{ run['semana_id'] }}</td>
+        <td>{{ run['filename'] }}</td>
+        <td>{{ run['status'] }}</td>
+        <td><code>{{ run['summary_json'] }}</code></td>
+        <td><a href="{{ url_for('importar_errores', run_id=run['id']) }}">errores.csv</a></td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="7">Sin corridas aún.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="es">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>{% block title %}LASFOR{% endblock %}</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='styles.css') }}" />
+  </head>
+  <body>
+    <header>
+      <h1>LASFOR</h1>
+      <nav>
+        <a href="{{ url_for('dashboard') }}">Dashboard</a>
+        <a href="{{ url_for('semanas') }}">Semanas</a>
+        <a href="{{ url_for('health') }}">Health</a>
+        <a href="{{ url_for('importar') }}">Importar</a>
+        <a href="{{ url_for('clientes') }}">Clientes</a>
+        <a href="{{ url_for('articulos') }}">Artículos</a>
+        <a href="{{ url_for('maestros_vehiculos') }}">Vehículos</a>
+        <a href="{{ url_for('maestros_rutas') }}">Rutas</a>
+        <a href="{{ url_for('autoruteo') }}">Autoruteo</a>
+        <a href="{{ url_for('resultado') }}">Resultado</a>
+      </nav>
+    </header>
+    <main>{% block content %}{% endblock %}</main>
+  </body>
+</html>

@@ -1,0 +1,44 @@
+{% extends "base.html" %}
+{% block title %}Semanas | LASFOR{% endblock %}
+{% block content %}
+<section>
+  <h2>Crear semana</h2>
+  <form method="post">
+    <label>Nombre <input type="text" name="nombre" required /></label>
+    <label>Fecha inicio <input type="date" name="fecha_inicio" /></label>
+    <label>Fecha entrega <input type="date" name="fecha_entrega" /></label>
+    <label><input type="checkbox" name="activar" /> Activar al crear</label>
+    <button type="submit">Guardar</button>
+  </form>
+</section>
+
+<section>
+  <h2>Semanas cargadas</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Nombre</th>
+        <th>Inicio</th>
+        <th>Entrega</th>
+        <th>Activa</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for semana in semanas %}
+      <tr>
+        <td>{{ semana['id'] }}</td>
+        <td>{{ semana['nombre'] }}</td>
+        <td>{{ semana['fecha_inicio'] or '—' }}</td>
+        <td>{{ semana['fecha_entrega'] or '—' }}</td>
+        <td>{{ 'Sí' if semana['activa'] else 'No' }}</td>
+      </tr>
+      {% else %}
+      <tr>
+        <td colspan="5">Sin semanas aún.</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
