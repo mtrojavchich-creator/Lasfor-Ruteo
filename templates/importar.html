@@ -3,14 +3,22 @@
 {% block content %}
 <section>
   <h2>Importar (modo seguro)</h2>
-  {% if message %}<p><strong>{{ message }}</strong></p>{% endif %}
+  {% if message %}
+  <p><strong>{{ message }}</strong></p>
+  {% endif %}
+
   <form method="post" enctype="multipart/form-data">
-    <label>Archivo IMPORT (.xlsm/.xlsx) <input type="file" name="archivo" accept=".xlsm,.xlsx" required /></label>
-    <label><input type="checkbox" name="import_operativo" checked /> Importar operativo (diario)</label>
-    <label><input type="checkbox" name="replace_operativo" /> Reemplazar operativo del escenario/semana</label>
-    <label><input type="checkbox" name="import_maestros" checked /> Importar maestros (ocasional)</label>
-    <label><input type="checkbox" name="modo_estricto" checked /> Modo estricto (rollback completo si hay errores)</label>
-    <button type="submit">Ejecutar importación</button>
+    <p>
+      <label for="archivo">Archivo IMPORT (.xlsm/.xlsx)</label>
+      <input id="archivo" type="file" name="archivo" accept=".xlsm,.xlsx" required />
+    </p>
+
+    <label><input type="checkbox" name="import_operativo" checked /> Importar operativo (diario)</label><br />
+    <label><input type="checkbox" name="replace_operativo" /> Reemplazar operativo del escenario/semana</label><br />
+    <label><input type="checkbox" name="import_maestros" checked /> Importar maestros (ocasional)</label><br />
+    <label><input type="checkbox" name="modo_estricto" checked /> Modo estricto (rollback completo si hay errores)</label><br />
+
+    <p><button type="submit">Ejecutar importación</button></p>
   </form>
 </section>
 
@@ -40,7 +48,9 @@
         <td><a href="{{ url_for('importar_errores', run_id=run['id']) }}">errores.csv</a></td>
       </tr>
       {% else %}
-      <tr><td colspan="7">Sin corridas aún.</td></tr>
+      <tr>
+        <td colspan="7">Sin corridas aún.</td>
+      </tr>
       {% endfor %}
     </tbody>
   </table>
